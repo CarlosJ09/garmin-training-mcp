@@ -1,66 +1,100 @@
 # Personal training log
 
-Ask a desktop AI assistant about your running and strength sessions. This TypeScript MCP server runs locally over standard input/output. It needs Node.js 22.18 or newer. There are no packages to install. Run the commands below in PowerShell from this folder.
+Ask a desktop AI assistant about your running and strength sessions. This TypeScript MCP server runs locally over standard input/output and fetches your workouts from the Garmin Connect Personal API when you ask. The AI client picks the tool and explains the result; the server computes the numbers and needs no LLM key.
+
+It runs inside WSL with Node.js 22.18 or newer. There are no packages to install and no build step. Run the commands below in a WSL shell from the project folder:
+
+```bash
+node --version   # must be v22.18 or newer
+```
 
 ## Try the sample week
 
-```powershell
-node ./server.mts --demo --preview
+```bash
+node ./src/server.mts --demo --preview
 ```
 
-This prints a fictional training week. To ask follow-up questions in a Codex chat, register the demo and start a fresh chat:
-
-```powershell
-codex mcp add training-demo -- node (Resolve-Path ./server.mts).Path --demo
-```
-
-Try “Use training-demo to summarize my last seven days.” Then ask “Compare my Park 5K runs after Leg day with my runs without recent lifting. Show the number of runs in each group.”
+This prints a fictional training week. Only the explicit `--demo` flag enables fictional data.
 
 ## Connect your own watch
 
 1. Sync the watch with Garmin Connect as usual.
-2. Create a personal key on the [Garmin Connect key page](https://connect.garmin.com/app/settings/personalApiToken). Keep the key out of chat, screenshots and the source tree.
-3. Save it in your own account's Garmin key file. This is the same location the official Garmin CLI reads. To create a new file from a masked PowerShell prompt, run the following once. If you already have a valid Garmin key file, skip this step.
+2. Create a personal key on the [Garmin Connect key page](https://connect.garmin.com/app/settings/personalApiToken). Garmin shows it once. Keep it out of chat, screenshots and this folder.
+3. Save it from a hidden prompt into your Linux home directory. This is the same file the official Garmin client reads. The script refuses to overwrite an existing key file.
 
-```powershell
-$keyDir = Join-Path $env:USERPROFILE '.config/garmin'
-$keyFile = Join-Path $keyDir 'connect-personal-api-key'
-if (Test-Path -LiteralPath $keyFile) { throw 'A key file already exists. Use the existing key or update it yourself.' }
-[void][IO.Directory]::CreateDirectory($keyDir)
-$secret = Read-Host 'Garmin Personal API key' -AsSecureString
-try {
-    $credential = [pscredential]::new('Garmin', $secret)
-    [IO.File]::WriteAllText($keyFile, $credential.GetNetworkCredential().Password)
-} finally {
-    $secret.Dispose()
-    Remove-Variable secret, credential -ErrorAction SilentlyContinue
-}
+   ```bash
+   ./scripts/save-garmin-key.sh
+   ```
+
+   The key is stored in plain text at `~/.config/garmin/connect-personal-api-key` and is readable only by your Linux user. Alternatively, set `GARMIN_PERSONAL_API_KEY` in the server's environment. The server exchanges the key for a 24-hour access token, keeps the token in memory, and talks only to Garmin.
+
+4. Confirm your latest synced workouts appear:
+
+   ```bash
+   node ./src/server.mts --preview
+   ```
+
+## Register with your AI client
+
+The launch command depends on where the client runs. The key file lives in WSL, so the server must always run inside WSL.
+
+### Codex desktop app on Windows
+
+A Windows app can't run `node` from WSL by name. If Node comes from a version manager such as nvm, `PATH` only includes it in interactive shells. The entry therefore points `wsl.exe` at your WSL distribution and the absolute Node binary. Generate it in WSL from this folder:
+
+```bash
+./scripts/codex-config.sh                        # live entry: training-log
+./scripts/codex-config.sh training-demo --demo   # optional fictional-data entry
 ```
 
-The file stores the key as plain text in your Windows profile. Alternatively, supply the server process with the environment variable `GARMIN_PERSONAL_API_KEY`. Garmin exchanges the key for a short-lived access token. The server caches the token in memory and sends requests only to Garmin.
+Paste the output into `%USERPROFILE%\.codex\config.toml`. It has this shape:
 
-4. Confirm that your latest synced workouts appear, then register the live server:
-
-```powershell
-node ./server.mts --preview
-codex mcp add training-log -- node (Resolve-Path ./server.mts).Path
+```toml
+[mcp_servers.training-log]
+command = "wsl.exe"
+args = ["-d", "<distribution>", "--", "<absolute path to node>", "<project folder>/src/server.mts"]
 ```
 
-5. Start a fresh Codex chat. Ask “Use training-log to show my runs and gym sessions from the last seven days.” The assistant receives the workout summaries it requests. Other desktop clients with local stdio MCP support can launch `node` with the absolute server path as its first argument.
+Restart Codex and start a new chat. If you upgrade Node or move the folder, run the script again and replace the entry. Windows environment variables don't reach the WSL process. To change the time zone, insert `"env", "TRAINING_TIME_ZONE=<IANA zone>",` after `"--"`.
+
+### A client running inside WSL
+
+Launch `node` with the absolute server path. For example, with Claude Code, run this from this folder. `-s user` makes the server available in every folder:
+
+```bash
+claude mcp add -s user training-log -- node "$PWD/src/server.mts"
+claude mcp get training-log   # should report: Connected
+```
+
+MCP servers load when a session starts. Open a new Claude Code session after registering.
+
+### Try it
+
+Ask "Use training-log to show my runs and gym sessions from the last seven days." Then ask a follow-up about one of the runs it lists.
 
 ## What the tools measure
 
-- `get_training_week` returns seven calendar dates ending today or on an explicit `end_date`. It includes recognized running and strength-training activities, recorded distance, session duration and average heart rate. Unrecorded session metrics appear as null. The default timezone for today's date is America/Santo_Domingo. Override it with `TRAINING_TIME_ZONE`.
-- `compare_runs_after_strength` takes an exact `run_title`, an optional `strength_title` substring and a lookback of 1–90 days. The default is 42 days. Use a distinctive recurring title for a route you run regularly. Title matching cannot verify the GPS route. Each group includes its sample size, median session pace, median average heart rate and the underlying sessions. Pace uses recorded duration divided by distance.
-- A gym session counts as recent if it started in the 24 hours before the run. If you ask about leg days, supply the label you actually use, such as `Piernas`. Runs after a strength session with an unmatched title go in the uncertain group. The tool cannot infer muscles trained from a generic Strength title. Exercise sets and reps are outside this version.
-- Each question fetches the requested period after Garmin syncs. A missing key or failed request produces an error. Only the explicit `--demo` flag enables fictional data.
+- `get_training_week` returns seven calendar dates ending today or on an explicit `end_date`. It includes recognized running and strength-training activities with Garmin activity id, local weekday, recorded distance, session duration, run pace and average heart rate. Weekday and pace are computed by the server, so the assistant doesn't derive them itself. Unrecorded metrics appear as null. The default time zone is America/Santo_Domingo. Override it with `TRAINING_TIME_ZONE`.
+- `compare_runs_after_strength` takes an exact `run_title`, an optional `strength_title` substring and a lookback of 1–90 days. The default is 42 days. Use a distinctive recurring title for a route you run regularly. Title matching can't verify the GPS route. Each group includes its sample size, median pace, median average heart rate and the underlying sessions. Pace is recorded duration divided by distance.
+- A gym session counts as recent if it started within the 24 hours before the run. For leg days, supply the label you actually use, such as `Piernas`. Runs after a strength session with a non-matching title go in the uncertain group, because a generic "Strength" title says nothing about the muscles trained. Exercise sets and reps aren't covered yet.
+- Each question fetches the requested period after Garmin syncs. A missing key or failed request produces an error, never substitute data.
+
+## Inspecting a strength session
+
+To see which strength details Garmin returns for one activity, run the read-only probe. It saves the activity details, the workout and the original activity ZIP. The output is personal data, so write it outside this folder:
+
+```bash
+node ./scripts/inspect-activity.mts <activityId> ~/garmin-inspect
+```
+
+Activity ids appear in `--preview` output.
 
 ## Verification
 
-```powershell
-node --test ./training.test.mts
+```bash
+node --test ./src/training.test.mts
 ```
 
-Tests cover weekly totals, ambiguous strength labels, paginated activity retrieval with a fake Garmin service, and MCP client requests over standard input/output.
+Tests cover weekly totals, ambiguous strength labels, token exchange (bare and JSON responses), paginated retrieval against a fake Garmin service, and MCP requests over standard input/output. They don't prove your watch records every field. Compare `--preview` output with Garmin Connect for that.
 
-Garmin documents personal access and its reference client here. [Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq) · [Garmin reference client](https://github.com/garmin/connect-personal-api-python)
+Garmin documents personal access and its reference client here: [Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq) · [Garmin reference client](https://github.com/garmin/connect-personal-api-python). The Personal API is for your own data. It isn't meant for apps serving other users.
