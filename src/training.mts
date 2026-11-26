@@ -26,11 +26,16 @@ function utcStart(r: Recording) {
   return t ? Date.parse(/Z$|[+-]\d\d:\d\d$/.test(t) ? t : t + 'Z') : NaN;
 }
 
+// Computed here so the assistant never has to derive calendar facts or arithmetic itself.
+const weekday = (r: Recording) => new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(localDay(r) + 'T00:00:00Z'));
+
 function session(r: Recording) {
+  const km = isRun(r) && positive(r.distance) ? r.distance / 1000 : null;
   return {
-    id: String(r.activityId), title: title(r), localStart: r.startTimeLocal, sport: sport(r),
+    id: String(r.activityId), title: title(r), weekday: weekday(r), localStart: r.startTimeLocal, sport: sport(r),
     minutes: positive(r.duration) ? round(r.duration / 60) : null,
-    km: isRun(r) && positive(r.distance) ? round(r.distance / 1000) : null,
+    km: km === null ? null : round(km),
+    secondsPerKm: km !== null && positive(r.duration) ? Math.round(r.duration / km) : null,
     averageBpm: positive(r.averageHR) ? r.averageHR : null
   };
 }

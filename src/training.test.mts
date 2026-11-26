@@ -13,6 +13,14 @@ test('weekly totals include training from the inclusive seven-day window', () =>
   assert.equal(result.recordedRunKm, 10);
 });
 
+test('sessions carry the local weekday and run pace so the assistant need not derive them', () => {
+  const run = { activityId: 1, activityName: 'Easy', activityType: { typeKey: 'running' },
+    startTimeLocal: '2026-11-20 17:44:54', duration: 2766, distance: 6010 };
+  const [s] = week([run], '2026-11-19', end).sessions;
+  assert.equal(s.weekday, 'Friday');
+  assert.equal(s.secondsPerKm, 460);  // 7:40 per km
+});
+
 test('unidentified gym workouts do not become evidence for a no-lifting baseline', () => {
   const records = demoRows(end);
   records[0].activityName = 'Strength';
@@ -43,6 +51,23 @@ test('a fake Garmin transport exercises token exchange, pagination and deduplica
   });
   assert.equal((await fetchRecordings('2026-11-19', end)).length, 51);
   assert.equal(calls.length, 3);
+});
+
+test('a JSON token envelope is unwrapped before use', async t => {
+  const old = process.env.GARMIN_PERSONAL_API_KEY;
+  process.env.GARMIN_PERSONAL_API_KEY = 'fixture';
+  t.after(() => {
+    if (old === undefined) delete process.env.GARMIN_PERSONAL_API_KEY;
+    else process.env.GARMIN_PERSONAL_API_KEY = old;
+  });
+  // A query string loads a separate module instance, so no token is cached from the previous test.
+  const fresh: typeof import('./garmin.mts') = await import(new URL('./garmin.mts?json-token', import.meta.url).href);
+  t.mock.method(globalThis, 'fetch', async (_input: URL | string, options: RequestInit) => {
+    if (options.method === 'POST') return Response.json({ access_token: 'jwt-in-json' });
+    assert.equal((options.headers as Record<string,string>).Authorization, 'Bearer jwt-in-json');
+    return Response.json([]);
+  });
+  assert.deepEqual(await fresh.fetchRecordings('2026-11-19', end), []);
 });
 
 test('stdio client negotiates MCP, discovers tools, runs both and receives validation errors', () => {
