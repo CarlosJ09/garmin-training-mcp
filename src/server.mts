@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline';
-import { fetchRecordings } from '../garmin.mts';
+import { fetchRecordings } from './garmin.mts';
 import { compare, demoRows, parseDay, shiftDay, today, week } from './training.mts';
 
 const demo = process.argv.includes('--demo');

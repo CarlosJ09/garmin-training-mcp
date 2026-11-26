@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { compare, demoRows, week } from '../training.mts';
-import { fetchRecordings } from '../garmin.mts';
+import { compare, demoRows, week } from './training.mts';
+import { fetchRecordings } from './garmin.mts';
 
 const end = '2026-11-25';
 test('weekly totals include training from the inclusive seven-day window', () => {

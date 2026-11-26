@@ -1,4 +1,4 @@
-import type { Recording } from '../garmin.mts';
+import type { Recording } from './garmin.mts';
 
 const dayMs = 86400000;
 export const today = () => new Intl.DateTimeFormat('en-CA', {
