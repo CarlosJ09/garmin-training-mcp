@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    // Node runs the .ts sources directly (type stripping), so tsc only type-checks.
+    "noEmit": true,
+    "target": "es2024",
+    "module": "nodenext",
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test", "scripts"]
+}

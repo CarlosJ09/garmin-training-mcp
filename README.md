@@ -1,100 +1,114 @@
 # Personal training log
 
-Ask a desktop AI assistant about your running and strength sessions. This TypeScript MCP server runs locally over standard input/output and fetches your workouts from the Garmin Connect Personal API when you ask. The AI client picks the tool and explains the result; the server computes the numbers and needs no LLM key.
+Ask your AI assistant about your running and strength sessions. This local [MCP](https://modelcontextprotocol.io) server fetches your workouts from the Garmin Connect Personal API when you ask. The assistant picks the tool and explains the result, and the server computes the numbers, so no LLM API key is needed.
 
-It runs inside WSL with Node.js 22.18 or newer. There are no packages to install and no build step. Run the commands below in a WSL shell from the project folder:
+Sync your watch as usual, then ask "How was my training week?". There's nothing to log by hand.
 
-```bash
-node --version   # must be v22.18 or newer
+## How it works
+
+The server is a short-lived local process, not a service you keep running. Your chat app starts it when it opens and talks to it over standard input/output, and the process exits when the app closes. Each question fetches the requested dates from Garmin at that moment. The Garmin access token lives only in memory.
+
+```
+Claude Desktop ──stdio──▶ src/stdio.ts ──▶ queries ──▶ training/ (pure analytics)
+                                              └──────▶ garmin/   (Personal API client)
 ```
 
-## Try the sample week
+## Setup
+
+Requirements: WSL with Node.js 22.18 or newer and pnpm. Node runs the TypeScript sources directly, so there's no build step.
 
 ```bash
-node ./src/server.mts --demo --preview
+pnpm install
+pnpm preview:demo   # print a fictional training week
 ```
 
-This prints a fictional training week. Only the explicit `--demo` flag enables fictional data.
-
-## Connect your own watch
+### Connect your Garmin account
 
 1. Sync the watch with Garmin Connect as usual.
-2. Create a personal key on the [Garmin Connect key page](https://connect.garmin.com/app/settings/personalApiToken). Garmin shows it once. Keep it out of chat, screenshots and this folder.
-3. Save it from a hidden prompt into your Linux home directory. This is the same file the official Garmin client reads. The script refuses to overwrite an existing key file.
+2. Create a personal key on the [Garmin Connect key page](https://connect.garmin.com/app/settings/personalApiToken). Garmin shows it only once. Keep it out of chat, screenshots and this folder.
+3. Save it from a hidden prompt. The script refuses to overwrite an existing key file.
 
    ```bash
    ./scripts/save-garmin-key.sh
    ```
 
-   The key is stored in plain text at `~/.config/garmin/connect-personal-api-key` and is readable only by your Linux user. Alternatively, set `GARMIN_PERSONAL_API_KEY` in the server's environment. The server exchanges the key for a 24-hour access token, keeps the token in memory, and talks only to Garmin.
+   The key is stored at `~/.config/garmin/connect-personal-api-key` (mode 600), the same file Garmin's own client reads. Alternatively, set `GARMIN_PERSONAL_API_KEY` in the server's environment.
 
-4. Confirm your latest synced workouts appear:
+4. Check that your latest workouts appear:
 
    ```bash
-   node ./src/server.mts --preview
+   pnpm preview
    ```
 
 ## Register with your AI client
 
-The launch command depends on where the client runs. The key file lives in WSL, so the server must always run inside WSL.
+The server always runs inside WSL, where the key file lives. Windows apps can't find an nvm-managed `node` by name, so `scripts/client-config.sh` prints an entry with this machine's absolute paths. Run it again after upgrading Node or moving the folder.
 
-### Codex desktop app on Windows
-
-A Windows app can't run `node` from WSL by name. If Node comes from a version manager such as nvm, `PATH` only includes it in interactive shells. The entry therefore points `wsl.exe` at your WSL distribution and the absolute Node binary. Generate it in WSL from this folder:
+### Claude Desktop (Windows)
 
 ```bash
-./scripts/codex-config.sh                        # live entry: training-log
-./scripts/codex-config.sh training-demo --demo   # optional fictional-data entry
+./scripts/client-config.sh claude-desktop
 ```
 
-Paste the output into `%USERPROFILE%\.codex\config.toml`. It has this shape:
+In Claude Desktop, open **Settings → Developer → Edit Config** and merge the output into the `"mcpServers"` object. Then quit Claude Desktop from the system tray, because closing the window leaves it running, and reopen it.
 
-```toml
-[mcp_servers.training-log]
-command = "wsl.exe"
-args = ["-d", "<distribution>", "--", "<absolute path to node>", "<project folder>/src/server.mts"]
-```
-
-Restart Codex and start a new chat. If you upgrade Node or move the folder, run the script again and replace the entry. Windows environment variables don't reach the WSL process. To change the time zone, insert `"env", "TRAINING_TIME_ZONE=<IANA zone>",` after `"--"`.
-
-### A client running inside WSL
-
-Launch `node` with the absolute server path. For example, with Claude Code, run this from this folder. `-s user` makes the server available in every folder:
+### Codex (Windows)
 
 ```bash
-claude mcp add -s user training-log -- node "$PWD/src/server.mts"
-claude mcp get training-log   # should report: Connected
+./scripts/client-config.sh codex
 ```
 
-MCP servers load when a session starts. Open a new Claude Code session after registering.
+Paste the output into `%USERPROFILE%\.codex\config.toml` and restart Codex.
 
-### Try it
-
-Ask "Use training-log to show my runs and gym sessions from the last seven days." Then ask a follow-up about one of the runs it lists.
-
-## What the tools measure
-
-- `get_training_week` returns seven calendar dates ending today or on an explicit `end_date`. It includes recognized running and strength-training activities with Garmin activity id, local weekday, recorded distance, session duration, run pace and average heart rate. Weekday and pace are computed by the server, so the assistant doesn't derive them itself. Unrecorded metrics appear as null. The default time zone is America/Santo_Domingo. Override it with `TRAINING_TIME_ZONE`.
-- `compare_runs_after_strength` takes an exact `run_title`, an optional `strength_title` substring and a lookback of 1–90 days. The default is 42 days. Use a distinctive recurring title for a route you run regularly. Title matching can't verify the GPS route. Each group includes its sample size, median pace, median average heart rate and the underlying sessions. Pace is recorded duration divided by distance.
-- A gym session counts as recent if it started within the 24 hours before the run. For leg days, supply the label you actually use, such as `Piernas`. Runs after a strength session with a non-matching title go in the uncertain group, because a generic "Strength" title says nothing about the muscles trained. Exercise sets and reps aren't covered yet.
-- Each question fetches the requested period after Garmin syncs. A missing key or failed request produces an error, never substitute data.
-
-## Inspecting a strength session
-
-To see which strength details Garmin returns for one activity, run the read-only probe. It saves the activity details, the workout and the original activity ZIP. The output is personal data, so write it outside this folder:
+### Claude Code (inside WSL)
 
 ```bash
-node ./scripts/inspect-activity.mts <activityId> ~/garmin-inspect
+claude mcp add -s user training-log -- node "$PWD/src/stdio.ts"
 ```
 
-Activity ids appear in `--preview` output.
+For fictional data in any client, register a second entry with `--demo`, for example `./scripts/client-config.sh claude-desktop training-demo --demo`.
 
-## Verification
+## Tools
+
+- **`get_training_week`**: the seven calendar days ending today or on `end_date`. Returns the number of runs and strength sessions, recorded running kilometres and training minutes. Each session comes with its Garmin activity id, weekday, start time, duration, distance, pace and average heart rate. The server computes weekday and pace so the assistant never has to. Unrecorded metrics are null.
+- **`compare_runs_after_strength`**: runs sharing an exact `run_title` over a lookback of 1–90 days (default 42). Runs are grouped by whether a strength session started in the previous 24 hours. Pass `strength_title` (for example `Piernas`) to count only matching gym sessions. A recent session with a non-matching title, such as a generic "Strength", puts the run in an *uncertain* group rather than the rested baseline. Each group reports its size, median pace and median heart rate, and every run used is listed.
+
+Title matching doesn't verify route, distance or conditions. The server tells the assistant to describe differences as observations and to state sample sizes.
+
+"Today" uses America/Santo_Domingo by default. Override it with `TRAINING_TIME_ZONE`. A missing key or failed Garmin request produces an error, never substitute data. Only `--demo` enables fictional data.
+
+## Development
 
 ```bash
-node --test ./src/training.test.mts
+pnpm check        # type-check (tsc) and run all tests
+pnpm test         # tests only
+pnpm start        # run the stdio server (what MCP clients launch)
 ```
 
-Tests cover weekly totals, ambiguous strength labels, token exchange (bare and JSON responses), paginated retrieval against a fake Garmin service, and MCP requests over standard input/output. They don't prove your watch records every field. Compare `--preview` output with Garmin Connect for that.
+| Path | Responsibility |
+|---|---|
+| `src/stdio.ts`, `src/preview.ts` | Entry points: the MCP server over stdio, and a terminal preview |
+| `src/server.ts` | MCP tool definitions and input schemas, independent of transport |
+| `src/queries.ts` | Use cases: load activities for a date range and run an analysis |
+| `src/context.ts` | Wiring: chooses Garmin or demo data from the config |
+| `src/config.ts` | Command-line flags and environment |
+| `src/garmin/` | Personal API client: token exchange, errors, activity search |
+| `src/training/` | Pure analytics: date handling, session normalization, weekly summary, run comparison |
+| `src/demo/` | Deterministic fictional history for `--demo` and tests |
+| `test/` | One test file per module. `server.test.ts` drives the tools through a real MCP client |
 
-Garmin documents personal access and its reference client here: [Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq) · [Garmin reference client](https://github.com/garmin/connect-personal-api-python). The Personal API is for your own data. It isn't meant for apps serving other users.
+Analytics code never touches the network, and the Garmin client never knows about training concepts. Tests replace the network with a fake `fetch` and the data source with fixtures. Dependencies are pinned, and `pnpm-workspace.yaml` refuses package versions published less than 14 days ago.
+
+### Inspecting a strength session
+
+To see which strength details Garmin returns for an activity, run the read-only probe. It saves the activity details, the linked workout and the original FIT file as a ZIP. The output is personal data, so write it outside this folder:
+
+```bash
+node scripts/inspect-activity.ts <activityId> ~/garmin-inspect
+```
+
+Activity ids appear in `pnpm preview` output.
+
+## References
+
+[Personal API FAQ](https://developer.garmin.com/gc-developer-program/personal/personal-faq) · [Garmin reference client](https://github.com/garmin/connect-personal-api-python) · [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk). The Personal API is for your own data. It isn't meant for apps serving other users.
